@@ -1,21 +1,25 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher
-from configs.config import TELEGRAM_BOT_TOKEN
+from configs.config import load_config
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
 logger = logging.getLogger(__name__)
 
-bot = Bot(token=TELEGRAM_BOT_TOKEN)
-dp = Dispatcher()
-
-from bot import *
+from bot import bot, dp
 
 async def main():
-    logger.info("Deleting webhook...")
+    """Start the bot in polling mode"""
+    logger.info("Starting bot in polling mode")
+
+    # Delete webhook if exists
     await bot.delete_webhook(drop_pending_updates=True)
 
-    logger.info("Starting the bot...")
+    # Start polling
+    logger.info("Bot is running...")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
 
 if __name__ == "__main__":
