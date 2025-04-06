@@ -4,7 +4,13 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from datetime import datetime, timedelta
 from configs.config import TELEGRAM_BOT_TOKEN, SEARCH_PERIODS
-from management.main import get_cheap_flights, get_popular_destinations_from_berlin, find_cheapest_flights_from_berlin
+from management.main import (
+    get_cheap_flights,
+    get_popular_destinations_from_berlin,
+    find_cheapest_flights_from_berlin,
+    find_cheapest_flights_from_berlin_async,
+    search_all_cities_for_date_async
+)
 from management.calendar_factory import CalendarMarkup, CalendarCallbackFactory
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
@@ -90,7 +96,7 @@ async def handle_period_selection(callback: types.CallbackQuery):
     days = SEARCH_PERIODS[period]
 
     await callback.answer()
-    await callback.message.edit_text("🔄 Шукаю найдешевші рейси для кожного міста (це може зайняти до 2-3 хвилин)...")
+    progress_message = await callback.message.edit_text("🔄 Шукаю найдешевші рейси для кожного міста (це може зайняти до 2-3 хвилин)...")
 
     # Use days to form the correct date range
     today = datetime.now()
@@ -99,8 +105,16 @@ async def handle_period_selection(callback: types.CallbackQuery):
     date_from = today.strftime("%Y-%m-%d")
     date_to = end_date.strftime("%Y-%m-%d")
 
-    # Use the function with the correct date parameters
-    flights = find_cheapest_flights_from_berlin(date_from, date_to)
+    # Use the async function to find flights in parallel
+    try:
+        start_time = datetime.now()
+        flights = await find_cheapest_flights_from_berlin_async(date_from, date_to)
+        end_time = datetime.now()
+        execution_time = (end_time - start_time).total_seconds()
+        print(f"Flight search completed in {execution_time:.2f} seconds")
+    except Exception as e:
+        await callback.message.answer(f"Сталася помилка при пошуку: {e}")
+        return
 
     if not flights:
         await callback.message.answer("На жаль, рейсів не знайдено 😢")
@@ -129,9 +143,11 @@ async def handle_period_selection(callback: types.CallbackQuery):
                     f"📅 Дата: {flight_date}{time_info}\n"
                     f"🔗 [Забронювати]({flight['link']})\n\n")
 
-    await callback.message.answer(response,
-                                parse_mode="Markdown",
-                                disable_web_page_preview=True)
+    await progress_message.edit_text(
+        response,
+        parse_mode="Markdown",
+        disable_web_page_preview=True
+    )
 
 @dp.callback_query(lambda c: c.data.startswith('city_'))
 async def handle_city_selection(callback: types.CallbackQuery):
@@ -175,93 +191,86 @@ async def process_calendar(callback: types.CallbackQuery, callback_data: Calenda
         city_code = user_info.get("city")
         search_type = user_info.get("search_type", "specific_city")  # Default to specific city search
 
-        await callback.message.edit_text("🔄 Шукаю рейси...")
+        # Send a progress message that can be updated
+        progress_message = await callback.message.edit_text("🔄 Шукаю рейси...")
 
         # Format the selected date
         date_str = selected_date.strftime("%Y-%m-%d")
 
-        if search_type == "specific_city":
-            # Search for flights to specific city on the selected date
-            if not city_code:
-                await callback.message.edit_text("Помилка: місто не вибрано. Почніть спочатку.")
-                return
+        try:
+            start_time = datetime.now()
 
-            flights = get_cheap_flights(
-                "BER",
-                city_code,
-                date_str,
-                ""  # Leave empty because API searches on the selected date +/- flexible days
+            if search_type == "specific_city":
+                # Search for flights to specific city on the selected date
+                if not city_code:
+                    await progress_message.edit_text("Помилка: місто не вибрано. Почніть спочатку.")
+                    return
+
+                flights = get_cheap_flights(
+                    "BER",
+                    city_code,
+                    date_str,
+                    ""  # Leave empty because API searches on the selected date +/- flexible days
+                )
+
+                if not flights:
+                    await progress_message.edit_text(
+                        f"На {selected_date.strftime('%d.%m.%Y')} рейсів не знайдено 😢\n\n"
+                        f"Спробуйте обрати іншу дату або інший напрямок."
+                    )
+                    return
+
+                response = f"Знайдені рейси на {selected_date.strftime('%d.%m.%Y')}:\n\n"
+
+                # Sort by price and take the 5 cheapest
+                sorted_flights = sorted(flights, key=lambda x: x['price'])[:5]
+
+                for flight in sorted_flights:
+                    flight_date = datetime.strptime(flight['date'].split('T')[0], '%Y-%m-%d').strftime('%d.%m.%Y')
+                    flight_time = flight['date'].split('T')[1][:5] if 'T' in flight['date'] else ""
+                    time_info = f", час: {flight_time}" if flight_time else ""
+
+                    response += (f"💰 Ціна: {flight['price']}€\n"
+                               f"📅 Дата: {flight_date}{time_info}\n"
+                               f"🔗 [Забронювати]({flight['link']})\n\n")
+            else:
+                # Search for cheapest flights to all cities on the selected date
+                await progress_message.edit_text(f"🔄 Шукаю найдешевші рейси на {selected_date.strftime('%d.%m.%Y')} до всіх міст...")
+
+                # Use the async function for parallel requests
+                sorted_flights = await search_all_cities_for_date_async(date_str)
+
+                if not sorted_flights:
+                    await progress_message.edit_text(
+                        f"На {selected_date.strftime('%d.%m.%Y')} рейсів не знайдено 😢\n\n"
+                        f"Спробуйте обрати іншу дату."
+                    )
+                    return
+
+                response = f"🔥 Найдешевші рейси на {selected_date.strftime('%d.%m.%Y')} з Берліна:\n\n"
+
+                for flight in sorted_flights:
+                    flight_date = datetime.strptime(flight['date'].split('T')[0], '%Y-%m-%d').strftime('%d.%m.%Y')
+                    flight_time = flight['date'].split('T')[1][:5] if 'T' in flight['date'] else ""
+                    time_info = f", {flight_time}" if flight_time else ""
+
+                    response += (f"🛫 {flight['city']}\n"
+                               f"💰 Ціна: {flight['price']}€\n"
+                               f"📅 Дата: {flight_date}{time_info}\n"
+                               f"🔗 [Забронювати]({flight['link']})\n\n")
+
+            end_time = datetime.now()
+            execution_time = (end_time - start_time).total_seconds()
+            print(f"Flight search completed in {execution_time:.2f} seconds")
+
+            await progress_message.edit_text(
+                response,
+                parse_mode="Markdown",
+                disable_web_page_preview=True
             )
-
-            if not flights:
-                await callback.message.edit_text(
-                    f"На {selected_date.strftime('%d.%m.%Y')} рейсів не знайдено 😢\n\n"
-                    f"Спробуйте обрати іншу дату або інший напрямок."
-                )
-                return
-
-            response = f"Знайдені рейси на {selected_date.strftime('%d.%m.%Y')}:\n\n"
-
-            # Sort by price and take the 5 cheapest
-            sorted_flights = sorted(flights, key=lambda x: x['price'])[:5]
-
-            for flight in sorted_flights:
-                flight_date = datetime.strptime(flight['date'].split('T')[0], '%Y-%m-%d').strftime('%d.%m.%Y')
-                flight_time = flight['date'].split('T')[1][:5] if 'T' in flight['date'] else ""
-                time_info = f", час: {flight_time}" if flight_time else ""
-
-                response += (f"💰 Ціна: {flight['price']}€\n"
-                           f"📅 Дата: {flight_date}{time_info}\n"
-                           f"🔗 [Забронювати]({flight['link']})\n\n")
-        else:
-            # Search for cheapest flights to all cities on the selected date
-            # We'll use a function to find flights for a specific date across all destinations
-            destinations = get_popular_destinations_from_berlin()
-
-            await callback.message.edit_text(f"🔄 Шукаю найдешевші рейси на {selected_date.strftime('%d.%m.%Y')} до всіх міст (це може зайняти до 2-3 хвилин)...")
-
-            cheapest_per_city = {}
-
-            for dest in destinations:
-                flights = get_cheap_flights("BER", dest["code"], date_str, "")
-
-                if flights:
-                    # Add city name to each flight
-                    for flight in flights:
-                        flight["city"] = dest["city"]
-
-                    # Find the cheapest flight for this city
-                    cheapest_flight = min(flights, key=lambda x: x["price"])
-                    cheapest_per_city[dest["city"]] = cheapest_flight
-
-            if not cheapest_per_city:
-                await callback.message.edit_text(
-                    f"На {selected_date.strftime('%d.%m.%Y')} рейсів не знайдено 😢\n\n"
-                    f"Спробуйте обрати іншу дату."
-                )
-                return
-
-            # Convert dictionary to list and sort by price
-            cheapest_flights = list(cheapest_per_city.values())
-            sorted_flights = sorted(cheapest_flights, key=lambda x: x["price"])
-
-            response = f"🔥 Найдешевші рейси на {selected_date.strftime('%d.%m.%Y')} з Берліна:\n\n"
-
-            for flight in sorted_flights:
-                flight_date = datetime.strptime(flight['date'].split('T')[0], '%Y-%m-%d').strftime('%d.%m.%Y')
-                flight_time = flight['date'].split('T')[1][:5] if 'T' in flight['date'] else ""
-                time_info = f", {flight_time}" if flight_time else ""
-
-                response += (f"🛫 {flight['city']}\n"
-                           f"💰 Ціна: {flight['price']}€\n"
-                           f"📅 Дата: {flight_date}{time_info}\n"
-                           f"🔗 [Забронювати]({flight['link']})\n\n")
-
-        await callback.message.edit_text(
-            response,
-            parse_mode="Markdown",
-            disable_web_page_preview=True
-        )
+        except Exception as e:
+            await progress_message.edit_text(f"Сталася помилка при пошуку: {e}")
+            return
 
     elif act in ["PREV-MONTH", "NEXT-MONTH"]:
         if act == "PREV-MONTH":
