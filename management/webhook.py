@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, types
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
-from config import TELEGRAM_BOT_TOKEN, WEBHOOK_URL, WEBHOOK_PATH, WEBAPP_HOST, WEBAPP_PORT
+from configs.config import TELEGRAM_BOT_TOKEN, WEBHOOK_URL, WEBHOOK_PATH, WEBAPP_HOST, WEBAPP_PORT
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -11,15 +11,19 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 
+import sys
+import os
+# Add parent directory to import path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bot import *
 
 app = FastAPI(title="Telegram Bot Webhook")
 
 async def on_startup():
-    logger.info("Видаляємо старий webhook...")
+    logger.info("Deleting old webhook...")
     await bot.delete_webhook(drop_pending_updates=True)
 
-    logger.info(f"Встановлюємо webhook на {WEBHOOK_URL}{WEBHOOK_PATH}")
+    logger.info(f"Setting webhook at {WEBHOOK_URL}{WEBHOOK_PATH}")
     await bot.set_webhook(
         url=f"{WEBHOOK_URL}{WEBHOOK_PATH}",
         drop_pending_updates=True,
@@ -27,7 +31,7 @@ async def on_startup():
     )
 
 async def on_shutdown():
-    logger.info("Вимикаємо бота...")
+    logger.info("Shutting down the bot...")
     await bot.delete_webhook()
     await bot.session.close()
 
@@ -38,7 +42,7 @@ async def bot_webhook(request: Request):
         await dp.feed_update(bot=bot, update=update)
         return {'ok': True}
     except Exception as e:
-        logger.error(f"Помилка при обробці webhook: {e}")
+        logger.error(f"Error processing webhook: {e}")
         return {'ok': False, 'error': str(e)}
 
 @app.get("/")
@@ -57,12 +61,16 @@ async def startup_event():
 async def shutdown_event():
     await on_shutdown()
 
-if __name__ == "__main__":
+def main():
+    """Function to launch the webhook server"""
     import uvicorn
-    logger.info(f"Запускаємо webhook сервер на {WEBAPP_HOST}:{WEBAPP_PORT}")
+    logger.info(f"Starting webhook server on {WEBAPP_HOST}:{WEBAPP_PORT}")
     uvicorn.run(
         app,
         host=WEBAPP_HOST,
         port=WEBAPP_PORT,
         log_level="info"
     )
+
+if __name__ == "__main__":
+    main()

@@ -3,9 +3,9 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from datetime import datetime, timedelta
-from config import TELEGRAM_BOT_TOKEN, SEARCH_PERIODS
-from main import get_cheap_flights, get_popular_destinations_from_berlin, find_cheapest_flights_from_berlin
-from calendar_factory import CalendarMarkup, CalendarCallbackFactory
+from fly_bot.cheap_flight_berlin.configs.config import TELEGRAM_BOT_TOKEN, SEARCH_PERIODS
+from fly_bot.cheap_flight_berlin.management.main import get_cheap_flights, get_popular_destinations_from_berlin, find_cheapest_flights_from_berlin
+from fly_bot.cheap_flight_berlin.management.calendar_factory import CalendarMarkup, CalendarCallbackFactory
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
