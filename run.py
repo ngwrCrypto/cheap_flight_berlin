@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Bot launcher
+Запускач бота
 """
 import argparse
 import os
 import sys
 import logging
 
-# Add current directory to Python PATH
+# Додаємо поточну директорію до Python PATH
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Configure logging
+# Налаштування логування
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -18,17 +18,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Launch cheap flights bot")
-    parser.add_argument("--webhook", action="store_true", help="Run via webhook instead of polling")
+    parser = argparse.ArgumentParser(description="Запуск бота дешевих рейсів")
+    parser.add_argument("--webhook", action="store_true", help="Запустити через webhook замість polling")
 
     args = parser.parse_args()
 
     if args.webhook:
-        logger.info("Starting bot with webhook...")
+        logger.info("Запуск бота через webhook...")
         from management.webhook import main
         main()
     else:
-        logger.info("Starting bot with polling...")
+        logger.info("Запуск бота через polling...")
         from polling import main
         import asyncio
         asyncio.run(main())
