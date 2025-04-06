@@ -2,6 +2,7 @@ import requests
 from datetime import datetime, timedelta
 from icecream import ic
 import random
+import time
 
 
 # List of User-Agents for randomization
@@ -16,17 +17,37 @@ USER_AGENTS = [
 ]
 
 def get_random_user_agent():
-    """Returns a random User-Agent from the list"""
     return random.choice(USER_AGENTS)
 
 def get_flight_link(origin, destination, date):
-    """Generates a direct link to a Ryanair flight"""
-    formatted_date = date.split('T')[0]
+    """Generates a direct link to a Ryanair flight
+
+    Args:
+        origin: IATA code of the departure airport (e.g. "BER")
+        destination: IATA code of the destination airport (e.g. "BCN")
+        date: departure date, can be in 'YYYY-MM-DD' format or with time 'YYYY-MM-DDThh:mm:ss'
+    """
+    # Make sure we have the correct date format
+    if 'T' in date:
+        formatted_date = date.split('T')[0]
+    else:
+        formatted_date = date
+
     return f"https://www.ryanair.com/ua/uk/trip/flights/select?adults=1&teens=0&children=0&infants=0&dateOut={formatted_date}&dateIn=&isConnectedFlight=false&isReturn=false&discount=0&promoCode=&originIata={origin}&destinationIata={destination}&tpAdults=1&tpTeens=0&tpChildren=0&tpInfants=0&tpStartDate={formatted_date}&tpEndDate=&tpDiscount=0&tpPromoCode=&tpOriginIata={origin}&tpDestinationIata={destination}"
 
 def get_cheap_flights(origin, destination, date_from, date_to):
-    """Gets cheap flights from the Ryanair API"""
-    url = "https://www.ryanair.com/api/farfnd/v4/oneWayFares"
+    """Get information about cheap flights
+
+    Args:
+        origin: IATA code of the departure airport (e.g. "BER")
+        destination: IATA code of the destination airport (e.g. "BCN")
+        date_from: start date in YYYY-MM-DD format
+        date_to: end date in YYYY-MM-DD format
+    """
+    print(f"Searching for flights: {origin} -> {destination}, from {date_from} to {date_to}")
+
+    # Use a simplified URL for better stability
+    url = "https://www.ryanair.com/api/booking/v4/en-gb/availability"
     headers = {
         "User-Agent": get_random_user_agent(),
         "Content-Type": "application/json",
@@ -36,85 +57,171 @@ def get_cheap_flights(origin, destination, date_from, date_to):
         "Accept-Language": "uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7"
     }
     params = {
-        "departureAirportIataCode": origin,
-        "outboundDepartureDateFrom": date_from,
-        "outboundDepartureDateTo": date_to,
-        "destinationAirportIataCode": destination,
-        "currency": "EUR",
-        "limit": 16
+        "ADT": 1,  # 1 adult
+        "CHD": 0,  # 0 children
+        "DateIn": "",  # no return flight
+        "DateOut": date_from,  # departure date
+        "Destination": destination,
+        "Disc": 0,
+        "INF": 0,  # 0 infants
+        "Origin": origin,
+        "TEEN": 0,  # 0 teenagers
+        "promoCode": "",
+        "IncludeConnectingFlights": "false",
+        "FlexDaysBeforeOut": 2,  # search 2 days before
+        "FlexDaysOut": 2,  # search 2 days after
+        "ToUs": "AGREED",
+        "RoundTrip": "false"  # one-way only
     }
 
     try:
-        # Add a small timeout for requests
-        response = requests.get(url, headers=headers, params=params, timeout=10)
+        # Add a delay to avoid being blocked
+        time.sleep(random.uniform(0.5, 2))
 
+        print(f"Sending request to API: {url}")
+        # Add a small timeout for requests
+        response = requests.get(url, headers=headers, params=params, timeout=15)
+
+        print(f"Received response: status {response.status_code}")
         if response.status_code == 200:
-            data = response.json()
-            flights = []
-            for fare in data.get("fares", []):
-                price = fare["summary"]["price"]["value"]
-                departure_date = fare["outbound"]["departureDate"]
-                flight_link = get_flight_link(origin, destination, departure_date)
-                flights.append({
-                    "destination": destination,
-                    "price": price,
-                    "date": departure_date,
-                    "link": flight_link
-                })
-            return flights
+            try:
+                data = response.json()
+                flights = []
+
+                # Check the response structure
+                if "trips" in data and len(data["trips"]) > 0:
+                    for trip in data["trips"]:
+                        if "dates" in trip and len(trip["dates"]) > 0:
+                            for date_item in trip["dates"]:
+                                if "flights" in date_item and len(date_item["flights"]) > 0:
+                                    for flight in date_item["flights"]:
+                                        if "regularFare" in flight and "fares" in flight["regularFare"]:
+                                            price = float(flight["regularFare"]["fares"][0]["amount"])
+
+                                            # Get departure date
+                                            departure_date = flight["time"][0]
+                                            flight_link = get_flight_link(origin, destination, departure_date)
+
+                                            flights.append({
+                                                "destination": destination,
+                                                "price": price,
+                                                "date": departure_date,
+                                                "link": flight_link
+                                            })
+
+                print(f"Found flights: {len(flights)}")
+                return flights
+            except Exception as json_error:
+                print(f"JSON parsing error: {json_error}")
+                print(f"API response: {response.text[:500]}")
+                return []
         else:
-            print(f"Ryanair API Error: {response.status_code}")
-            if response.text:
-                print(f"Response: {response.text[:200]}")
+            print(f"Ryanair API error: {response.status_code}")
+            print(f"Response: {response.text[:500]}")
             return []
     except Exception as e:
         print(f"API request error: {e}")
         return []
 
 def get_popular_destinations_from_berlin():
-    """Returns a list of popular destinations from Berlin"""
     return [
-        {"code": "BCN", "city": "Barcelona"},
-        {"code": "ALC", "city": "Alicante"},
-        {"code": "AGP", "city": "Malaga"},
-        {"code": "ATH", "city": "Athens"},
-        {"code": "VLC", "city": "Valencia"},
-        {"code": "NAP", "city": "Naples"},
-        {"code": "CIA", "city": "Rome"},
-        {"code": "PMI", "city": "Palma de Mallorca"},
-        {"code": "LIS", "city": "Lisbon"},
-        {"code": "PRG", "city": "Prague"},
-        {"code": "MXP", "city": "Milan"},
-        {"code": "BUD", "city": "Budapest"},
-        {"code": "BRU", "city": "Brussels"},
-        {"code": "DUB", "city": "Dublin"},
-        {"code": "EDI", "city": "Edinburgh"},
-        {"code": "FAO", "city": "Faro"},
-        {"code": "OPO", "city": "Porto"},
-        {"code": "PSA", "city": "Pisa"},
-        {"code": "VIE", "city": "Vienna"},
-        {"code": "ZAG", "city": "Zagreb"}
+        {"code": "BCN", "city": "Барселона"},
+        {"code": "ALC", "city": "Аліканте"},
+        {"code": "AGP", "city": "Малага"},
+        {"code": "ATH", "city": "Афіни"},
+        {"code": "VLC", "city": "Валенсія"},
+        {"code": "NAP", "city": "Неаполь"},
+        {"code": "CIA", "city": "Рим"},
+        {"code": "PMI", "city": "Пальма-де-Майорка"},
+        {"code": "LIS", "city": "Лісабон"},
+        {"code": "PRG", "city": "Прага"},
+        {"code": "MXP", "city": "Мілан"},
+        {"code": "BUD", "city": "Будапешт"},
+        {"code": "BRU", "city": "Брюссель"},
+        {"code": "DUB", "city": "Дублін"},
+        {"code": "EDI", "city": "Единбург"},
+        {"code": "FAO", "city": "Фару"},
+        {"code": "OPO", "city": "Порту"},
+        {"code": "PSA", "city": "Піза"},
+        {"code": "VIE", "city": "Відень"},
+        {"code": "ZAG", "city": "Загреб"}
     ]
 
-def find_cheapest_flights_from_berlin():
-    """Finds the cheapest flights from Berlin for the next month"""
+def find_cheapest_flights_from_berlin(date_from=None, date_to=None):
+    """Finds the cheapest flights from Berlin to each city for a specified period
+
+    Args:
+        date_from: start date in YYYY-MM-DD format
+        date_to: end date in YYYY-MM-DD format
+
+    Returns:
+        List of cheapest flights for each city
+    """
     today = datetime.now()
-    next_month = today + timedelta(days=30)
+    three_months = today + timedelta(days=90)  # 3 months instead of 1
 
-    date_from = today.strftime("%Y-%m-%d")
-    date_to = next_month.strftime("%Y-%m-%d")
+    # If dates not provided, use 3 months by default
+    if not date_from:
+        date_from = today.strftime("%Y-%m-%d")
+    if not date_to:
+        date_to = three_months.strftime("%Y-%m-%d")
 
-    all_flights = []
+    print(f"Searching for cheapest flights from Berlin from {date_from} to {date_to}")
+
+    cheapest_per_city = {}  # Dictionary to store the cheapest flight for each city
     destinations = get_popular_destinations_from_berlin()
 
+    # Define dates for search (1 search per month for each destination)
+    search_dates = []
+    current_date = datetime.strptime(date_from, "%Y-%m-%d")
+    end_date = datetime.strptime(date_to, "%Y-%m-%d")
+
+    # Add the first date
+    search_dates.append(current_date.strftime("%Y-%m-%d"))
+
+    # Add dates every ~30 days
+    while current_date < end_date:
+        current_date += timedelta(days=30)
+        if current_date <= end_date:
+            search_dates.append(current_date.strftime("%Y-%m-%d"))
+
+    print(f"Searching on these dates: {search_dates}")
+
     for dest in destinations:
-        flights = get_cheap_flights("BER", dest["code"], date_from, date_to)
-        if flights:
-            for flight in flights:
-                flight["city"] = dest["city"]
-            all_flights.extend(flights)
+        print(f"Searching for flights to {dest['city']} ({dest['code']})")
+        all_flights = []
 
-    return sorted(all_flights, key=lambda x: x["price"])
+        # Search for each date
+        for search_date in search_dates:
+            flights = get_cheap_flights("BER", dest["code"], search_date, "")
 
-cheapest_flights = find_cheapest_flights_from_berlin()
-ic(cheapest_flights[:5])
+            if flights:
+                # Add city name to each flight
+                for flight in flights:
+                    flight["city"] = dest["city"]
+                all_flights.extend(flights)
+                print(f"Found {len(flights)} flights to {dest['city']} on {search_date}")
+
+        if all_flights:
+            # Find the cheapest flight among all dates
+            cheapest_flight = min(all_flights, key=lambda x: x["price"])
+            cheapest_per_city[dest["city"]] = cheapest_flight
+            print(f"Cheapest flight to {dest['city']}: {cheapest_flight['price']}€ on {cheapest_flight['date']}")
+
+    # Convert dictionary to list and sort by price
+    cheapest_flights = list(cheapest_per_city.values())
+    sorted_flights = sorted(cheapest_flights, key=lambda x: x["price"])
+
+    print(f"Found cheapest flights for {len(sorted_flights)} cities")
+    return sorted_flights
+
+# Example usage for testing
+if __name__ == "__main__":
+    # Get cheapest flights for 3 months
+    today = datetime.now()
+    three_months = today + timedelta(days=90)
+    date_from = today.strftime("%Y-%m-%d")
+    date_to = three_months.strftime("%Y-%m-%d")
+
+    cheapest_flights = find_cheapest_flights_from_berlin(date_from, date_to)
+    ic(cheapest_flights[:5])

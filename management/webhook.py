@@ -13,17 +13,17 @@ dp = Dispatcher()
 
 import sys
 import os
-# Add parent directory to import path
+# Додаємо батьківську директорію до шляху імпорту
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bot import *
 
 app = FastAPI(title="Telegram Bot Webhook")
 
 async def on_startup():
-    logger.info("Deleting old webhook...")
+    logger.info("Видаляємо старий webhook...")
     await bot.delete_webhook(drop_pending_updates=True)
 
-    logger.info(f"Setting webhook at {WEBHOOK_URL}{WEBHOOK_PATH}")
+    logger.info(f"Встановлюємо webhook на {WEBHOOK_URL}{WEBHOOK_PATH}")
     await bot.set_webhook(
         url=f"{WEBHOOK_URL}{WEBHOOK_PATH}",
         drop_pending_updates=True,
@@ -31,7 +31,7 @@ async def on_startup():
     )
 
 async def on_shutdown():
-    logger.info("Shutting down the bot...")
+    logger.info("Вимикаємо бота...")
     await bot.delete_webhook()
     await bot.session.close()
 
@@ -42,7 +42,7 @@ async def bot_webhook(request: Request):
         await dp.feed_update(bot=bot, update=update)
         return {'ok': True}
     except Exception as e:
-        logger.error(f"Error processing webhook: {e}")
+        logger.error(f"Помилка при обробці webhook: {e}")
         return {'ok': False, 'error': str(e)}
 
 @app.get("/")
@@ -62,9 +62,9 @@ async def shutdown_event():
     await on_shutdown()
 
 def main():
-    """Function to launch the webhook server"""
+    """Функція для запуску webhook сервера"""
     import uvicorn
-    logger.info(f"Starting webhook server on {WEBAPP_HOST}:{WEBAPP_PORT}")
+    logger.info(f"Запускаємо webhook сервер на {WEBAPP_HOST}:{WEBAPP_PORT}")
     uvicorn.run(
         app,
         host=WEBAPP_HOST,

@@ -3,13 +3,11 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from datetime import datetime, timedelta
-from configs.config import SEARCH_PERIODS, load_config
+from configs.config import TELEGRAM_BOT_TOKEN, SEARCH_PERIODS
 from management.main import get_cheap_flights, get_popular_destinations_from_berlin, find_cheapest_flights_from_berlin
 from management.calendar_factory import CalendarMarkup, CalendarCallbackFactory
 
-# Завантаження конфігурації
-config = load_config()
-bot = Bot(token=config.telegram.token)
+bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 
 calendar = CalendarMarkup()
@@ -27,7 +25,8 @@ def create_period_keyboard():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="На тиждень", callback_data="period_week"),
-            InlineKeyboardButton(text="На місяць", callback_data="period_month")
+            InlineKeyboardButton(text="На місяць", callback_data="period_month"),
+            InlineKeyboardButton(text="На 3 місяці", callback_data="period_three_months")
         ]
     ])
     return keyboard
@@ -61,7 +60,7 @@ async def start_handler(message: types.Message):
         try:
             await message.answer_animation(gif_url)
         except Exception as e:
-            print(f"Помилка при відправці GIF: {e}")
+            print(f"Error sending GIF: {e}")
 
     await message.answer(text, reply_markup=create_main_keyboard())
 
@@ -81,18 +80,43 @@ async def handle_period_selection(callback: types.CallbackQuery):
     days = SEARCH_PERIODS[period]
 
     await callback.answer()
-    await callback.message.edit_text("🔄 Шукаю найдешевші рейси...")
+    await callback.message.edit_text("🔄 Шукаю найдешевші рейси для кожного міста (це може зайняти до 2-3 хвилин)...")
 
-    flights = find_cheapest_flights_from_berlin()
+    # Use days to form the correct date range
+    today = datetime.now()
+    end_date = today + timedelta(days=days)
+
+    date_from = today.strftime("%Y-%m-%d")
+    date_to = end_date.strftime("%Y-%m-%d")
+
+    # Use the function with the correct date parameters
+    flights = find_cheapest_flights_from_berlin(date_from, date_to)
+
     if not flights:
         await callback.message.answer("На жаль, рейсів не знайдено 😢")
         return
 
-    response = "Знайдені найдешевші рейси:\n\n"
-    for flight in flights[:5]:
+    # Create a nice message with the information
+    period_text = ""
+    if period == "week":
+        period_text = f"найближчий тиждень"
+    elif period == "month":
+        period_text = f"найближчий місяць"
+    elif period == "three_months":
+        period_text = f"найближчі 3 місяці"
+
+    response = f"🔥 Найдешевші рейси на {period_text} з Берліна:\n\n"
+
+    # Pass all found flights (already sorted by price)
+    for flight in flights:
+        # Format the date for better display
+        flight_date = datetime.strptime(flight['date'].split('T')[0], '%Y-%m-%d').strftime('%d.%m.%Y')
+        flight_time = flight['date'].split('T')[1][:5] if 'T' in flight['date'] else ""
+        time_info = f", {flight_time}" if flight_time else ""
+
         response += (f"🛫 {flight['city']}\n"
                     f"💰 Ціна: {flight['price']}€\n"
-                    f"📅 Дата: {flight['date'].split('T')[0]}\n"
+                    f"📅 Дата: {flight_date}{time_info}\n"
                     f"🔗 [Забронювати]({flight['link']})\n\n")
 
     await callback.message.answer(response,
@@ -141,25 +165,36 @@ async def process_calendar(callback: types.CallbackQuery, callback_data: Calenda
             await callback.message.edit_text("Помилка: місто не вибрано. Почніть спочатку.")
             return
 
+        await callback.message.edit_text("🔄 Шукаю рейси...")
+
         # Search for flights on the selected date
-        end_date = selected_date + timedelta(days=1)
+        date_str = selected_date.strftime("%Y-%m-%d")
         flights = get_cheap_flights(
             "BER",
             city_code,
-            selected_date.strftime("%Y-%m-%d"),
-            end_date.strftime("%Y-%m-%d")
+            date_str,
+            ""  # Leave empty because API searches on the selected date +/- flexible days
         )
 
         if not flights:
             await callback.message.edit_text(
-                f"На {selected_date.strftime('%d.%m.%Y')} рейсів не знайдено 😢"
+                f"На {selected_date.strftime('%d.%m.%Y')} рейсів не знайдено 😢\n\n"
+                f"Спробуйте обрати іншу дату або інший напрямок."
             )
             return
 
         response = f"Знайдені рейси на {selected_date.strftime('%d.%m.%Y')}:\n\n"
-        for flight in sorted(flights, key=lambda x: x['price'])[:5]:
+
+        # Sort by price and take the 5 cheapest
+        sorted_flights = sorted(flights, key=lambda x: x['price'])[:5]
+
+        for flight in sorted_flights:
+            flight_date = datetime.strptime(flight['date'].split('T')[0], '%Y-%m-%d').strftime('%d.%m.%Y')
+            flight_time = flight['date'].split('T')[1][:5] if 'T' in flight['date'] else ""
+            time_info = f", час: {flight_time}" if flight_time else ""
+
             response += (f"💰 Ціна: {flight['price']}€\n"
-                        f"📅 Дата: {flight['date'].split('T')[0]}\n"
+                        f"📅 Дата: {flight_date}{time_info}\n"
                         f"🔗 [Забронювати]({flight['link']})\n\n")
 
         await callback.message.edit_text(
