@@ -344,84 +344,155 @@ async def get_cheap_flights_async(origin, destination, date_from, date_to=""):
 
 # Async version of find_cheapest_flights_from_berlin
 async def find_cheapest_flights_from_berlin_async(date_from=None, date_to=None):
-    """Async version: Finds the cheapest flights from Berlin to each city for a specified period
+    """Find cheapest flights from Berlin asynchronously
 
     Args:
-        date_from: start date in YYYY-MM-DD format
-        date_to: end date in YYYY-MM-DD format
+        date_from: Start date in YYYY-MM-DD format. Defaults to today.
+        date_to: End date in YYYY-MM-DD format. Defaults to date_from + 30 days.
 
     Returns:
-        List of cheapest flights for each city
+        List of flights found
     """
-    today = datetime.now()
-    three_months = today + timedelta(days=90)
+    print("🔎 Searching for cheapest flights from Berlin...")
 
-    # If dates not provided, use 3 months by default
-    if not date_from:
-        date_from = today.strftime("%Y-%m-%d")
-    if not date_to:
-        date_to = three_months.strftime("%Y-%m-%d")
+    # Set default dates if not provided
+    if date_from is None:
+        date_from = datetime.now().strftime("%Y-%m-%d")
 
-    print(f"Searching for cheapest flights from Berlin from {date_from} to {date_to}")
+    if date_to is None:
+        # Default to 30 days if not specified
+        date_from_dt = datetime.strptime(date_from, "%Y-%m-%d")
+        date_to_dt = date_from_dt + timedelta(days=30)
+        date_to = date_to_dt.strftime("%Y-%m-%d")
 
-    # Get destinations and use the sync function for safety
+    # Calculate total search period in days
+    date_from_dt = datetime.strptime(date_from, "%Y-%m-%d")
+    date_to_dt = datetime.strptime(date_to, "%Y-%m-%d")
+    total_days = (date_to_dt - date_from_dt).days
+
+    print(f"Searching for flights from {date_from} to {date_to} ({total_days} days)")
+
+    # Determine search frequency based on period length
+    if total_days <= 10:
+        # For short periods - search every day
+        step_days = 1
+    elif total_days <= 45:
+        # For month period - search every 3 days
+        step_days = 3
+    else:
+        # For three months - search every 5 days
+        step_days = 5
+
+    # Generate search dates
+    search_dates = []
+    current_dt = date_from_dt
+    while current_dt <= date_to_dt:
+        search_dates.append(current_dt.strftime("%Y-%m-%d"))
+        current_dt += timedelta(days=step_days)
+
+    # Make sure we include the end date if it's not already included
+    if date_to_dt.strftime("%Y-%m-%d") not in search_dates:
+        search_dates.append(date_to)
+
+    print(f"Will search on {len(search_dates)} dates: {', '.join(search_dates[:5])}...")
+    if len(search_dates) > 5:
+        print(f"...and {len(search_dates) - 5} more dates")
+
+    # Get list of destinations
     destinations = get_popular_destinations_from_berlin()
+    print(f"Will search for flights to {len(destinations)} destinations")
 
-    # Create a list to store the cheapest flights
-    all_results = []
+    # Create a list to store all flights
+    all_flights = []
 
-    # Increase the number of concurrent tasks
-    max_concurrent = 5  # Увеличиваем до 5 одновременных запросов
+    # Maximum number of concurrent tasks - REDUCED TO 2
+    max_concurrent = 2
 
-    # Process in batches
-    for i in range(0, len(destinations), max_concurrent):
-        batch = destinations[i:i+max_concurrent]
-        print(f"Processing destinations {i+1}-{i+len(batch)} of {len(destinations)}")
+    # Process each date
+    for date_str in search_dates:
+        print(f"Searching for flights on {date_str}")
 
-        # Create tasks for the entire batch at once
-        tasks = []
-        dest_map = {}  # To map tasks back to destinations
+        # Process destinations in batches
+        for i in range(0, len(destinations), max_concurrent):
+            batch = destinations[i:i+max_concurrent]
+            print(f"Processing destinations {i+1}-{i+len(batch)} of {len(destinations)}")
 
-        for dest in batch:
-            task = asyncio.to_thread(
-                get_cheap_flights,
-                "BER",
-                dest["code"],
-                date_from,
-                date_to
-            )
-            tasks.append(task)
-            dest_map[len(tasks)-1] = dest
+            # Create tasks for all destinations in this batch
+            tasks = []
+            dest_map = {}
 
-        # Execute all tasks in the batch simultaneously
-        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for idx, dest in enumerate(batch):
+                task = asyncio.to_thread(
+                    get_cheap_flights,
+                    "BER",
+                    dest["code"],
+                    date_str,
+                    ""  # Empty string because API will search around the date
+                )
+                tasks.append(task)
+                dest_map[idx] = dest
 
-        # Process all results
-        for idx, flights in enumerate(batch_results):
-            dest = dest_map[idx]
+            # Execute all tasks in the batch simultaneously
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            try:
-                # Skip exceptions
-                if isinstance(flights, Exception):
-                    print(f"Error finding flights to {dest['city']}: {flights}")
-                    continue
+            # Process the results
+            for idx, flights in enumerate(batch_results):
+                dest = dest_map[idx]
 
-                if flights:
-                    # Add city name to each flight
-                    for flight in flights:
-                        flight["city"] = dest["city"]
+                try:
+                    # Skip exceptions
+                    if isinstance(flights, Exception):
+                        print(f"Error finding flights to {dest['city']}: {flights}")
+                        continue
 
-                    # Get the cheapest flight
-                    cheapest_flight = min(flights, key=lambda x: x["price"])
-                    all_results.append(cheapest_flight)
-                    print(f"Found cheapest flight to {dest['city']}: {cheapest_flight['price']}€")
-            except Exception as e:
-                print(f"Error processing flights to {dest['city']}: {e}")
+                    if flights:
+                        # Add city name to each flight
+                        for flight in flights:
+                            flight["city"] = dest["city"]
+
+                        # Add all flights to the results
+                        all_flights.extend(flights)
+
+                        # Find and log the cheapest flight for this batch
+                        cheapest_flight = min(flights, key=lambda x: x["price"])
+                        print(f"Found cheapest flight to {dest['city']} on {date_str}: {cheapest_flight['price']}€")
+                except Exception as e:
+                    print(f"Error processing flights to {dest['city']}: {e}")
+
+        # Short pause between date batches to reduce API load
+        await asyncio.sleep(1)
+
+    # Filter out flights that are outside our date range
+    filtered_flights = []
+    for flight in all_flights:
+        try:
+            flight_date = datetime.strptime(flight['date'].split('T')[0], '%Y-%m-%d')
+            if date_from_dt <= flight_date <= date_to_dt:
+                filtered_flights.append(flight)
+        except Exception as e:
+            print(f"Error filtering flight: {e}")
+
+    print(f"Found {len(filtered_flights)} flights in total after filtering")
+
+    # Group flights by destination
+    flights_by_dest = {}
+    for flight in filtered_flights:
+        dest = flight["city"]
+        if dest not in flights_by_dest:
+            flights_by_dest[dest] = []
+        flights_by_dest[dest].append(flight)
+
+    # Find cheapest flight for each destination
+    cheapest_flights = []
+    for dest, flights in flights_by_dest.items():
+        if flights:
+            cheapest_flight = min(flights, key=lambda x: x["price"])
+            cheapest_flights.append(cheapest_flight)
 
     # Sort by price
-    sorted_flights = sorted(all_results, key=lambda x: x["price"])
+    sorted_flights = sorted(cheapest_flights, key=lambda x: x["price"])
 
-    print(f"Found cheapest flights for {len(sorted_flights)}/{len(destinations)} cities")
+    print(f"Found cheapest flights for {len(sorted_flights)}/{len(destinations)} destinations")
     return sorted_flights
 
 # Simpler async version to search all cities for specific date
@@ -436,14 +507,24 @@ async def search_all_cities_for_date_async(date_str):
     """
     print(f"Starting search for flights on {date_str}")
 
+    # Parse the date string to a datetime object
+    search_date = datetime.strptime(date_str, "%Y-%m-%d")
+
+    # Create a small date range around the selected date (+/- 1 day)
+    # This is because the API might not have exact flights on the exact date
+    date_from = (search_date - timedelta(days=1)).strftime("%Y-%m-%d")
+    date_to = (search_date + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    print(f"Will search flights in the range {date_from} to {date_to}")
+
     # Get destinations
     destinations = get_popular_destinations_from_berlin()
 
-    # Use a simpler approach with asyncio.to_thread
+    # Create a list to store the results
     all_results = []
 
-    # Increase the number of concurrent requests
-    max_concurrent = 5  # Увеличиваем до 5 одновременных запросов
+    # Process in batches - REDUCED TO 2 concurrent requests
+    max_concurrent = 2
 
     for i in range(0, len(destinations), max_concurrent):
         batch = destinations[i:i+max_concurrent]
@@ -451,7 +532,7 @@ async def search_all_cities_for_date_async(date_str):
 
         # Create tasks for all destinations in this batch
         tasks = []
-        dest_map = {}  # To map tasks back to destinations
+        dest_map = {}
 
         for idx, dest in enumerate(batch):
             task = asyncio.to_thread(
@@ -459,7 +540,7 @@ async def search_all_cities_for_date_async(date_str):
                 "BER",
                 dest["code"],
                 date_str,
-                ""
+                ""  # Empty string because API will search around the date
             )
             tasks.append(task)
             dest_map[idx] = dest
@@ -467,7 +548,7 @@ async def search_all_cities_for_date_async(date_str):
         # Execute all tasks in the batch simultaneously
         batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Process all results at once
+        # Process the results
         for idx, flights in enumerate(batch_results):
             dest = dest_map[idx]
 
@@ -477,20 +558,36 @@ async def search_all_cities_for_date_async(date_str):
                     print(f"Error finding flights to {dest['city']}: {flights}")
                     continue
 
+                # Filter flights to make sure they're close to our selected date
+                filtered_flights = []
                 if flights:
-                    # Add city name to each flight
                     for flight in flights:
+                        # Add city name to each flight
                         flight["city"] = dest["city"]
 
-                    # Get the cheapest flight
-                    cheapest_flight = min(flights, key=lambda x: x["price"])
+                        # Parse the flight date to check if it's within our range
+                        try:
+                            flight_date = datetime.strptime(flight['date'].split('T')[0], '%Y-%m-%d')
+                            # Only include flights within 1 day of selected date
+                            date_diff = abs((flight_date - search_date).days)
+                            if date_diff <= 1:
+                                filtered_flights.append(flight)
+                        except Exception as e:
+                            print(f"Error parsing flight date: {e}")
+
+                # If we have flights after filtering
+                if filtered_flights:
+                    # Find the cheapest flight for this city
+                    cheapest_flight = min(filtered_flights, key=lambda x: x["price"])
                     all_results.append(cheapest_flight)
-                    print(f"Found cheapest flight to {dest['city']}: {cheapest_flight['price']}€")
+
+                    print(f"Found {len(filtered_flights)} flights to {dest['city']} on/around {date_str}")
+                    print(f"Cheapest flight: {cheapest_flight['price']}€ on {cheapest_flight['date'].split('T')[0]}")
             except Exception as e:
                 print(f"Error processing flights to {dest['city']}: {e}")
 
     # Sort by price
     sorted_flights = sorted(all_results, key=lambda x: x["price"])
 
-    print(f"Found cheapest flights for {len(sorted_flights)}/{len(destinations)} cities")
+    print(f"Found cheapest flights for {len(sorted_flights)}/{len(destinations)} cities on date {date_str}")
     return sorted_flights
