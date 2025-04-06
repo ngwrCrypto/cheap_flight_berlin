@@ -12,6 +12,7 @@ from management.main import (
     search_all_cities_for_date_async
 )
 from management.calendar_factory import CalendarMarkup, CalendarCallbackFactory
+import logging
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
@@ -294,3 +295,95 @@ async def process_calendar(callback: types.CallbackQuery, callback_data: Calenda
         )
 
     await callback.answer()
+
+async def handle_period_selection(message: types.Message):
+    """Handle selection of search period"""
+    user_id = message.from_user.id
+    period = message.text.lower()
+
+    # Save the selected period in user state
+    user_data[user_id]["period"] = period
+
+    # Calculate date range based on selected period
+    today = datetime.now()
+
+    if period == "тиждень":
+        date_to = today + timedelta(days=SEARCH_PERIODS["week"])
+    elif period == "місяць":
+        date_to = today + timedelta(days=SEARCH_PERIODS["month"])
+    elif period == "три місяці":
+        date_to = today + timedelta(days=SEARCH_PERIODS["three_months"])
+    else:
+        # Default to one month
+        date_to = today + timedelta(days=SEARCH_PERIODS["month"])
+
+    # Format dates
+    date_from = today.strftime("%Y-%m-%d")
+    date_to = date_to.strftime("%Y-%m-%d")
+
+    # Store dates in user data
+    user_data[user_id]["date_from"] = date_from
+    user_data[user_id]["date_to"] = date_to
+
+    # Log period and date range
+    logging.info(f"User {user_id} selected period: {period}, searching from {date_from} to {date_to}")
+
+    # Send a message to inform the user that search is in progress
+    search_message = await message.answer("🔍 Шукаю найдешевші квитки з Берліна... Це може зайняти деякий час.")
+
+    # Store the search message ID for later updates
+    user_data[user_id]["search_message_id"] = search_message.message_id
+
+    try:
+        # Use the period to determine how to search
+        if period == "тиждень":
+            # For shorter periods, use simpler search
+            results = await find_cheapest_flights_from_berlin_async(date_from, date_to)
+        elif period == "місяць":
+            # For month, use the specific dates
+            results = await find_cheapest_flights_from_berlin_async(date_from, date_to)
+        elif period == "три місяці":
+            # For three months, use the specific dates
+            results = await find_cheapest_flights_from_berlin_async(date_from, date_to)
+        else:
+            # Default to one month
+            results = await find_cheapest_flights_from_berlin_async(date_from, date_to)
+
+        # Sort results by price
+        results = sorted(results, key=lambda x: x["price"])
+
+        # Get the top 5 cheapest flights
+        top_5_flights = results[:5]
+
+        # Format a message with the results
+        if top_5_flights:
+            # Create a nice message with flight details
+            message_text = f"🔥 Найдешевші квитки з Берліна за {period}:\n\n"
+
+            for i, flight in enumerate(top_5_flights, 1):
+                # Extract the date without time
+                date_str = flight["date"].split("T")[0]
+                message_text += f"{i}. {flight['city']}: {flight['price']}€ ({date_str})\n"
+                message_text += f"   🔗 [Забронювати]({flight['link']})\n\n"
+
+            # Update the previous search message with the results
+            await bot.edit_message_text(
+                message_text,
+                chat_id=message.chat.id,
+                message_id=user_data[user_id]["search_message_id"],
+                parse_mode="Markdown",
+                disable_web_page_preview=True
+            )
+        else:
+            await bot.edit_message_text(
+                "😔 Не знайдено жодних квитків для вибраного періоду.",
+                chat_id=message.chat.id,
+                message_id=user_data[user_id]["search_message_id"]
+            )
+    except Exception as e:
+        logging.error(f"Error during flight search: {e}")
+        await bot.edit_message_text(
+            "😢 Сталася помилка під час пошуку квитків. Спробуйте пізніше.",
+            chat_id=message.chat.id,
+            message_id=user_data[user_id]["search_message_id"]
+        )
