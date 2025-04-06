@@ -92,7 +92,10 @@ async def show_date_search(message: types.Message):
 
 @dp.callback_query(lambda c: c.data.startswith('period_'))
 async def handle_period_selection(callback: types.CallbackQuery):
-    period = callback.data.split('_')[1]
+    # Extract period correctly: if there are multiple parts, join them after the first underscore
+    parts = callback.data.split('_')
+    period = '_'.join(parts[1:]) if len(parts) > 2 else parts[1]
+
     days = SEARCH_PERIODS[period]
 
     await callback.answer()

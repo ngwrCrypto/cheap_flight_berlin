@@ -78,12 +78,12 @@ def get_cheap_flights(origin, destination, date_from, date_to):
     }
 
     try:
-        # Add a delay to avoid being blocked
-        time.sleep(random.uniform(0.5, 2))
+        # Add a shorter delay to avoid being blocked
+        time.sleep(random.uniform(0.2, 0.8))  # Уменьшенная задержка
 
         print(f"Sending request to API: {url}")
         # Add a small timeout for requests
-        response = requests.get(url, headers=headers, params=params, timeout=15)
+        response = requests.get(url, headers=headers, params=params, timeout=10)  # Shorter timeout
 
         print(f"Received response: status {response.status_code}")
         if response.status_code == 200:
@@ -116,11 +116,10 @@ def get_cheap_flights(origin, destination, date_from, date_to):
                 return flights
             except Exception as json_error:
                 print(f"JSON parsing error: {json_error}")
-                print(f"API response: {response.text[:500]}")
+                print(f"API response: {response.text[:200]}")  # Сокращенный вывод
                 return []
         else:
             print(f"Ryanair API error: {response.status_code}")
-            print(f"Response: {response.text[:500]}")
             return []
     except Exception as e:
         print(f"API request error: {e}")
@@ -269,58 +268,79 @@ async def get_cheap_flights_async(origin, destination, date_from, date_to=""):
         "RoundTrip": "false"  # one-way only
     }
 
-    try:
-        # Add a small random delay to prevent API rate limiting
-        # More randomization to avoid pattern detection
-        delay = random.uniform(0.05, 0.3)
-        await asyncio.sleep(delay)
+    # Retry mechanism with exponential backoff
+    max_retries = 3
+    for retry in range(max_retries):
+        try:
+            # Add a longer random delay to prevent API rate limiting
+            # More randomization to avoid pattern detection
+            delay = random.uniform(0.5, 1.5 + retry * 0.5)  # Increase delay on each retry
+            await asyncio.sleep(delay)
 
-        async with aiohttp.ClientSession() as session:
-            # Add timeout to prevent hanging requests
-            try:
-                async with session.get(url, headers=headers, params=params, timeout=10) as response:
-                    print(f"Response for {destination}: status {response.status}")
+            # Log retry attempts
+            if retry > 0:
+                print(f"Retry #{retry} for {destination}")
 
-                    if response.status == 200:
-                        try:
-                            data = await response.json()
-                            flights = []
+            async with aiohttp.ClientSession() as session:
+                # Add timeout to prevent hanging requests
+                try:
+                    async with session.get(url, headers=headers, params=params, timeout=15) as response:
+                        print(f"Response for {destination}: status {response.status}")
 
-                            # Check the response structure
-                            if "trips" in data and len(data["trips"]) > 0:
-                                for trip in data["trips"]:
-                                    if "dates" in trip and len(trip["dates"]) > 0:
-                                        for date_item in trip["dates"]:
-                                            if "flights" in date_item and len(date_item["flights"]) > 0:
-                                                for flight in date_item["flights"]:
-                                                    if "regularFare" in flight and "fares" in flight["regularFare"]:
-                                                        price = float(flight["regularFare"]["fares"][0]["amount"])
+                        if response.status == 200:
+                            try:
+                                data = await response.json()
+                                flights = []
 
-                                                        # Get departure date
-                                                        departure_date = flight["time"][0]
-                                                        flight_link = get_flight_link(origin, destination, departure_date)
+                                # Check the response structure
+                                if "trips" in data and len(data["trips"]) > 0:
+                                    for trip in data["trips"]:
+                                        if "dates" in trip and len(trip["dates"]) > 0:
+                                            for date_item in trip["dates"]:
+                                                if "flights" in date_item and len(date_item["flights"]) > 0:
+                                                    for flight in date_item["flights"]:
+                                                        if "regularFare" in flight and "fares" in flight["regularFare"]:
+                                                            price = float(flight["regularFare"]["fares"][0]["amount"])
 
-                                                        flights.append({
-                                                            "destination": destination,
-                                                            "price": price,
-                                                            "date": departure_date,
-                                                            "link": flight_link
-                                                        })
+                                                            # Get departure date
+                                                            departure_date = flight["time"][0]
+                                                            flight_link = get_flight_link(origin, destination, departure_date)
 
-                            print(f"Found {len(flights)} flights for {destination}")
-                            return flights
-                        except Exception as json_error:
-                            print(f"JSON parsing error for {destination}: {json_error}")
+                                                            flights.append({
+                                                                "destination": destination,
+                                                                "price": price,
+                                                                "date": departure_date,
+                                                                "link": flight_link
+                                                            })
+
+                                print(f"Found {len(flights)} flights for {destination}")
+                                return flights
+                            except Exception as json_error:
+                                print(f"JSON parsing error for {destination}: {json_error}")
+                                # Continue to retry on JSON errors
+                        elif response.status == 409:
+                            # Conflict error - API rate limiting
+                            print(f"Rate limit (409) for {destination}, retrying after delay")
+                            continue  # Try again after longer delay
+                        else:
+                            print(f"API error for {destination}: HTTP {response.status}")
+                            if retry < max_retries - 1:
+                                continue  # Try again for non-200 responses
                             return []
-                    else:
-                        print(f"API error for {destination}: HTTP {response.status}")
-                        return []
-            except asyncio.TimeoutError:
-                print(f"Request timeout for {destination}")
-                return []
-    except Exception as e:
-        print(f"General error for {destination}: {e}")
-        return []
+                except asyncio.TimeoutError:
+                    print(f"Request timeout for {destination}")
+                    if retry < max_retries - 1:
+                        continue  # Try again for timeouts
+                    return []
+        except Exception as e:
+            print(f"General error for {destination}: {e}")
+            if retry < max_retries - 1:
+                continue  # Try again for general errors
+            return []
+
+    # If we've exhausted all retries
+    print(f"Failed to get flights for {destination} after {max_retries} retries")
+    return []
 
 # Async version of find_cheapest_flights_from_berlin
 async def find_cheapest_flights_from_berlin_async(date_from=None, date_to=None):
@@ -334,7 +354,7 @@ async def find_cheapest_flights_from_berlin_async(date_from=None, date_to=None):
         List of cheapest flights for each city
     """
     today = datetime.now()
-    three_months = today + timedelta(days=90)  # 3 months instead of 1
+    three_months = today + timedelta(days=90)
 
     # If dates not provided, use 3 months by default
     if not date_from:
@@ -344,70 +364,67 @@ async def find_cheapest_flights_from_berlin_async(date_from=None, date_to=None):
 
     print(f"Searching for cheapest flights from Berlin from {date_from} to {date_to}")
 
-    cheapest_per_city = {}  # Dictionary to store the cheapest flight for each city
+    # Get destinations and use the sync function for safety
     destinations = get_popular_destinations_from_berlin()
 
-    # Define dates for search (1 search per month for each destination)
-    search_dates = []
-    current_date = datetime.strptime(date_from, "%Y-%m-%d")
-    end_date = datetime.strptime(date_to, "%Y-%m-%d")
+    # Create a list to store the cheapest flights
+    all_results = []
 
-    # Add the first date
-    search_dates.append(current_date.strftime("%Y-%m-%d"))
+    # Increase the number of concurrent tasks
+    max_concurrent = 5  # Увеличиваем до 5 одновременных запросов
 
-    # Add dates every ~30 days
-    while current_date < end_date:
-        current_date += timedelta(days=30)
-        if current_date <= end_date:
-            search_dates.append(current_date.strftime("%Y-%m-%d"))
+    # Process in batches
+    for i in range(0, len(destinations), max_concurrent):
+        batch = destinations[i:i+max_concurrent]
+        print(f"Processing destinations {i+1}-{i+len(batch)} of {len(destinations)}")
 
-    print(f"Searching on these dates: {search_dates}")
+        # Create tasks for the entire batch at once
+        tasks = []
+        dest_map = {}  # To map tasks back to destinations
 
-    # Create tasks for parallel search
-    tasks = []
-    task_info = []  # To store (dest, date) for each task
-
-    for dest in destinations:
-        for search_date in search_dates:
-            task = get_cheap_flights_async("BER", dest["code"], search_date)
+        for dest in batch:
+            task = asyncio.to_thread(
+                get_cheap_flights,
+                "BER",
+                dest["code"],
+                date_from,
+                date_to
+            )
             tasks.append(task)
-            task_info.append((dest, search_date))
+            dest_map[len(tasks)-1] = dest
 
-    # Execute all search tasks in parallel using gather
-    print(f"Starting parallel search for {len(tasks)} destination-date combinations")
-    results = await asyncio.gather(*tasks)
-    print(f"Parallel search completed, processing results")
+        # Execute all tasks in the batch simultaneously
+        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Process results
-    city_flights = {}
-    for i, flights in enumerate(results):
-        dest, search_date = task_info[i]
-        if flights:
-            if dest["city"] not in city_flights:
-                city_flights[dest["city"]] = []
+        # Process all results
+        for idx, flights in enumerate(batch_results):
+            dest = dest_map[idx]
 
-            # Add city name to each flight
-            for flight in flights:
-                flight["city"] = dest["city"]
+            try:
+                # Skip exceptions
+                if isinstance(flights, Exception):
+                    print(f"Error finding flights to {dest['city']}: {flights}")
+                    continue
 
-            city_flights[dest["city"]].extend(flights)
-            print(f"Found {len(flights)} flights to {dest['city']} on {search_date}")
+                if flights:
+                    # Add city name to each flight
+                    for flight in flights:
+                        flight["city"] = dest["city"]
 
-    # Find the cheapest flight for each city
-    for city, flights in city_flights.items():
-        if flights:
-            cheapest_flight = min(flights, key=lambda x: x["price"])
-            cheapest_per_city[city] = cheapest_flight
-            print(f"Cheapest flight to {city}: {cheapest_flight['price']}€ on {cheapest_flight['date']}")
+                    # Get the cheapest flight
+                    cheapest_flight = min(flights, key=lambda x: x["price"])
+                    all_results.append(cheapest_flight)
+                    print(f"Found cheapest flight to {dest['city']}: {cheapest_flight['price']}€")
+            except Exception as e:
+                print(f"Error processing flights to {dest['city']}: {e}")
 
-    # Convert dictionary to list and sort by price
-    cheapest_flights = list(cheapest_per_city.values())
-    sorted_flights = sorted(cheapest_flights, key=lambda x: x["price"])
+    # Sort by price
+    sorted_flights = sorted(all_results, key=lambda x: x["price"])
 
-    print(f"Found cheapest flights for {len(sorted_flights)} cities")
+    print(f"Found cheapest flights for {len(sorted_flights)}/{len(destinations)} cities")
     return sorted_flights
 
-# Async version to search all cities for specific date
+# Simpler async version to search all cities for specific date
 async def search_all_cities_for_date_async(date_str):
     """Async search for the cheapest flights to all cities on a specific date
 
@@ -417,35 +434,63 @@ async def search_all_cities_for_date_async(date_str):
     Returns:
         List of cheapest flights for each city on that date
     """
+    print(f"Starting search for flights on {date_str}")
+
+    # Get destinations
     destinations = get_popular_destinations_from_berlin()
 
-    # Create tasks for all destinations
-    tasks = []
-    for dest in destinations:
-        task = get_cheap_flights_async("BER", dest["code"], date_str)
-        tasks.append(task)
+    # Use a simpler approach with asyncio.to_thread
+    all_results = []
 
-    # Execute all search tasks in parallel
-    print(f"Starting parallel search for {len(tasks)} destinations on {date_str}")
-    results = await asyncio.gather(*tasks)
-    print(f"Parallel search completed, processing results")
+    # Increase the number of concurrent requests
+    max_concurrent = 5  # Увеличиваем до 5 одновременных запросов
 
-    # Process the results
-    cheapest_per_city = {}
-    for i, flights in enumerate(results):
-        dest = destinations[i]
-        if flights:
-            # Add city name to each flight
-            for flight in flights:
-                flight["city"] = dest["city"]
+    for i in range(0, len(destinations), max_concurrent):
+        batch = destinations[i:i+max_concurrent]
+        print(f"Processing destinations {i+1}-{i+len(batch)} of {len(destinations)}")
 
-            # Find the cheapest flight for this city
-            cheapest_flight = min(flights, key=lambda x: x["price"])
-            cheapest_per_city[dest["city"]] = cheapest_flight
-            print(f"Found {len(flights)} flights to {dest['city']}, cheapest: {cheapest_flight['price']}€")
+        # Create tasks for all destinations in this batch
+        tasks = []
+        dest_map = {}  # To map tasks back to destinations
 
-    # Convert to sorted list
-    cheapest_flights = list(cheapest_per_city.values())
-    sorted_flights = sorted(cheapest_flights, key=lambda x: x["price"])
+        for idx, dest in enumerate(batch):
+            task = asyncio.to_thread(
+                get_cheap_flights,
+                "BER",
+                dest["code"],
+                date_str,
+                ""
+            )
+            tasks.append(task)
+            dest_map[idx] = dest
 
+        # Execute all tasks in the batch simultaneously
+        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Process all results at once
+        for idx, flights in enumerate(batch_results):
+            dest = dest_map[idx]
+
+            try:
+                # Skip exceptions
+                if isinstance(flights, Exception):
+                    print(f"Error finding flights to {dest['city']}: {flights}")
+                    continue
+
+                if flights:
+                    # Add city name to each flight
+                    for flight in flights:
+                        flight["city"] = dest["city"]
+
+                    # Get the cheapest flight
+                    cheapest_flight = min(flights, key=lambda x: x["price"])
+                    all_results.append(cheapest_flight)
+                    print(f"Found cheapest flight to {dest['city']}: {cheapest_flight['price']}€")
+            except Exception as e:
+                print(f"Error processing flights to {dest['city']}: {e}")
+
+    # Sort by price
+    sorted_flights = sorted(all_results, key=lambda x: x["price"])
+
+    print(f"Found cheapest flights for {len(sorted_flights)}/{len(destinations)} cities")
     return sorted_flights
