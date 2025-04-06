@@ -12,11 +12,11 @@ class CalendarCallbackFactory(CallbackData, prefix="calendar"):
 class CalendarMarkup:
     def __init__(self):
         self.months = {
-            1: "Січень", 2: "Лютий", 3: "Березень", 4: "Квітень",
-            5: "Травень", 6: "Червень", 7: "Липень", 8: "Серпень",
-            9: "Вересень", 10: "Жовтень", 11: "Листопад", 12: "Грудень"
+            1: "January", 2: "February", 3: "March", 4: "April",
+            5: "May", 6: "June", 7: "July", 8: "August",
+            9: "September", 10: "October", 11: "November", 12: "December"
         }
-        self.days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]
+        self.days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
     def create_calendar(
         self,
@@ -25,7 +25,7 @@ class CalendarMarkup:
     ) -> InlineKeyboardMarkup:
         keyboard = []
 
-        # Додаємо рядок з місяцем і роком
+        # Add row with month and year
         keyboard.append([
             InlineKeyboardButton(
                 text="<<",
@@ -56,7 +56,7 @@ class CalendarMarkup:
             ),
         ])
 
-        # Додаємо дні тижня
+        # Add days of the week
         keyboard.append(
             [InlineKeyboardButton(text=day, callback_data=CalendarCallbackFactory(
                 act="IGNORE",
@@ -96,6 +96,7 @@ class CalendarMarkup:
         return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
     def _get_month_calendar(self, year: int, month: int) -> list:
+        """Generates a calendar array for the specified month"""
         first_day = datetime(year, month, 1)
         week_day = first_day.weekday()
         days_in_month = (datetime(year, month % 12 + 1, 1) - timedelta(days=1)).day if month != 12 \
